@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Offline Email Extractor (Single-file)</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --text: #e6e6e6;
+    --muted: #9aa0a6;
+    --accent: #5cc8ff;
+    --accent2: #8fff7a;
+    --danger: #ff6b6b;
+    --border: #2a2f3a;
+    --focus: #b5e8ff;
+    --code: #1e222a;
+  }
+  [data-theme="light"] {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --text: #1c1e21;
+    --muted: #5f6b7a;
+    --accent: #2a7fff;
+    --accent2: #1ea05b;
+    --danger: #c62828;
+    --border: #dfe3e8;
+    --focus: #a7c7ff;
+    --code: #f1f3f5;
+  }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Noto Sans", "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 12px; }
+  h1 { font-size: 20px; margin:0; }
+  .toolbar { display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
+  button, select, input[type="text"], input[type="number"] {
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; outline: none;
+  }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: #041018; border-color: transparent; }
+  button.success { background: var(--accent2); color: #041018; border-color: transparent; }
+  button.danger { background: var(--danger); color: #fff; border-color: transparent; }
+  button:focus, select:focus, input:focus, textarea:focus { box-shadow: 0 0 0 2px var(--focus); }
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .panel {
+    background: var(--panel); border:1px solid var(--border); border-radius: 12px;
+    padding: 12px; min-height: 140px;
+  }
+  .panel h2 { font-size: 16px; margin: 0 0 8px; }
+  textarea {
+    width: 100%; min-height: 160px; resize: vertical;
+    background: var(--code); color: var(--text); border:1px solid var(--border);
+    border-radius: 10px; padding: 10px; outline:none;
+  }
+  .drop {
+    border: 2px dashed var(--border); border-radius: 12px; padding: 16px; text-align: center;
+    color: var(--muted);
+  }
+  .drop.drag { border-color: var(--accent); color: var(--accent); }
+  .row { display:flex; gap:8px; flex-wrap: wrap; align-items:center; }
+  .row label { color: var(--muted); }
+  .badge { display:inline-block; background: var(--code); padding:4px 8px; border-radius:8px; border:1px solid var(--border); color: var(--muted); }
+  .list { max-height: 220px; overflow: auto; border:1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--code); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  .log { font-size: 12px; color: var(--muted); white-space: pre-wrap; max-height: 120px; overflow:auto; background: var(--code); padding:8px; border-radius:8px; border:1px solid var(--border); }
+  footer { margin-top: 12px; color: var(--muted); }
+  .kbd { border:1px solid var(--border); padding:2px 5px; border-radius:6px; background: var(--code); }
+</style>
+</head>
+<body data-theme="dark">
+<div class="wrap">
+  <header>
+    <h1>Offline Email Extractor</h1>
+    <div class="toolbar">
+      <button id="themeBtn" title="Prepínač témy">Tmavý/Svetlý</button>
+      <button id="saveProfileBtn">Uložiť profil</button>
+      <button id="loadProfileBtn">Načítať profil</button>
+      <button id="resetBtn" class="danger">Reset</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <section class="panel">
+      <h2>Vstup</h2>
+      <div class="row">
+        <input type="file" id="fileInput" multiple accept=".txt,.csv,.html,.htm,.log,.md" />
+        <span class="badge">Podporované: .txt, .csv, .html, .log, .md</span>
+      </div>
+      <div id="dropZone" class="drop" tabindex="0">Pretiahni sem súbory alebo vlož text do poľa nižšie</div>
+      <textarea id="inputText" placeholder="Vlož text, HTML, logy..."></textarea>
+    </section>
+
+    <section class="panel">
+      <h2>Konfigurácia</h2>
+      <div class="row">
+        <label>Regex režim:</label>
+        <select id="regexMode">
+          <option value="practical">Praktický (vyvážený)</option>
+          <option value="strict">Prísnejší (bližšie RFC, viac false-negatives)</option>
+        </select>
+        <label>Min. lokálna dĺžka:</label>
+        <input type="number" id="minLocalLen" value="1" min="1" style="width:90px" />
+      </div>
+      <div class="row">
+        <label>Whitelist domén (čiarky):</label>
+        <input type="text" id="domainWhitelist" placeholder="napr. example.com, firma.sk" style="flex:1" />
+      </div>
+      <div class="row">
+        <label>Blacklist domén (čiarky):</label>
+        <input type="text" id="domainBlacklist" placeholder="napr. spam.com, temp-mail.org" style="flex:1" />
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="stripPlus" checked /> Odstrániť aliasy “+tag”</label>
+        <label><input type="checkbox" id="normalizeCase" checked /> Normalizovať doménu na malé</label>
+        <label><input type="checkbox" id="ignoreDisposable" /> Ignorovať dočasné domény</label>
+      </div>
+      <div class="row">
+        <button id="extractBtn" class="primary">Extrahovať e‑maily</button>
+        <button id="copyBtn">Kopírovať výsledky</button>
+        <button id="downloadTxtBtn">Stiahnuť TXT</button>
+        <button id="downloadCsvBtn">Stiahnuť CSV</button>
+        <button id="downloadJsonBtn">Stiahnuť JSON</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Výsledky</h2>
+      <div class="row">
+        <span class="badge">Nájdené: <span id="foundCount">0</span></span>
+        <span class="badge">Unikátne: <span id="uniqueCount">0</span></span>
+      </div>
+      <div id="resultList" class="list mono"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Analytika</h2>
+      <div class="row">
+        <span class="badge">Domény: <span id="domainCount">0</span></span>
+        <span class="badge">TLD: <span id="tldCount">0</span></span>
+      </div>
+      <div id="analytics" class="list mono"></div>
+    </section>
+  </div>
+
+  <section class="panel" style="margin-top:12px">
+    <h2>Log</h2>
+    <div id="log" class="log"></div>
+  </section>
+
+  <footer>
+    Klávesové skratky: <span class="kbd">Ctrl/Cmd+Enter</span> extrahovať, <span class="kbd">Ctrl/Cmd+L</span> načítať profil, <span class="kbd">Ctrl/Cmd+S</span> uložiť profil.
+  </footer>
+</div>
+
+<script>
+(function() {
+  const el = id => document.getElementById(id);
+  const state = {
+    rawInputs: [],
+    emails: [],
+    uniqueEmails: [],
+    metaByEmail: new Map(), // email -> {domain, source}
+    profileKey: 'emailExtractorProfile_v1',
+  };
+
+  // Disposable domains (sample, extend as needed)
+  const DISPOSABLE = new Set([
+    'mailinator.com','trashmail.com','tempmail.org','10minutemail.com','guerrillamail.com',
+    'yopmail.com','getnada.com','temp-mail.io','linshiyouxiang.net','dispostable.com'
+  ]);
+
+  function log(msg) {
+    const t = new Date().toLocaleTimeString();
+    el('log').textContent += `[${t}] ${msg}\n`;
+    el('log').scrollTop = el('log').scrollHeight;
+  }
+
+  function setTheme(toggle=false) {
+    const root = document.body;
+    const current = root.getAttribute('data-theme') || 'dark';
+    const next = toggle ? (current === 'dark' ? 'light' : 'dark') : current;
+    root.setAttribute('data-theme', next);
+  }
+
+  // Regexes
+  const regexes = {
+    practical: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,
+    // A bit stricter: disallows starting/ending dot in local, consecutive dots, enforces labels
+    strict: /(?<![A-Za-z0-9._%+-])(?:[A-Za-z0-9](?:[A-Za-z0-9._%+-]*[A-Za-z0-9])?)@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}(?![A-Za-z0-9._%+-])/g
+  };
+
+  // Helpers
+  function normalizeEmail(email, { stripPlus, normalizeCase }) {
+    let [local, domain] = email.split('@');
+    if (stripPlus) {
+      const idx = local.indexOf('+');
+      if (idx !== -1) local = local.slice(0, idx);
+    }
+    if (normalizeCase) domain = domain.toLowerCase();
+    return `${local}@${domain}`;
+  }
+
+  function domainOf(email) { return email.split('@')[1] || ''; }
+  function tldOf(domain) {
+    const parts = domain.split('.');
+    return parts.length ? parts[parts.length - 1] : '';
+  }
+
+  function parseList(str) {
+    return str.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  }
+
+  function passesFilters(email, cfg) {
+    const d = domainOf(email).toLowerCase();
+    if (cfg.whitelist.size && !cfg.whitelist.has(d)) return false;
+    if (cfg.blacklist.size && cfg.blacklist.has(d)) return false;
+    if (cfg.ignoreDisposable && DISPOSABLE.has(d)) return false;
+    const local = email.split('@')[0];
+    if (local.length < cfg.minLocalLen) return false;
+    return true;
+  }
+
+  function extractFromText(text, cfg, sourceLabel) {
+    const mode = cfg.regexMode;
+    const re = regexes[mode];
+    if (!re) return [];
+    const found = text.match(re) || [];
+    const out = [];
+    for (const raw of found) {
+      const normalized = normalizeEmail(raw, cfg);
+      if (passesFilters(normalized, cfg)) {
+        out.push(normalized);
+        if (!state.metaByEmail.has(normalized)) {
+          state.metaByEmail.set(normalized, { domain: domainOf(normalized), source: sourceLabel });
+        }
+      }
+    }
+    return out;
+  }
+
+  function unique(arr) {
+    return Array.from(new Set(arr));
+  }
+
+  function sortEmails(arr) {
+    return arr.slice().sort((a, b) => {
+      const da = domainOf(a), db = domainOf(b);
+      if (da === db) return a.localeCompare(b);
+      return da.localeCompare(db);
+    });
+  }
+
+  function analyze(emails) {
+    const domCount = new Map();
+    const tldCount = new Map();
+    for (const e of emails) {
+      const d = domainOf(e).toLowerCase();
+      domCount.set(d, (domCount.get(d) || 0) + 1);
+      const t = tldOf(d);
+      tldCount.set(t, (tldCount.get(t) || 0) + 1);
+    }
+    return { domCount, tldCount };
+  }
+
+  function renderResults(found, uniqueList) {
+    el('foundCount').textContent = String(found.length);
+    el('uniqueCount').textContent = String(uniqueList.length);
+    const lines = uniqueList.map(e => e);
+    el('resultList').textContent = lines.join('\n');
+  }
+
+  function renderAnalytics(uniqueList) {
+    const { domCount, tldCount } = analyze(uniqueList);
+    const doms = Array.from(domCount.entries()).sort((a,b)=>b[1]-a[1]);
+    const tlds = Array.from(tldCount.entries()).sort((a,b)=>b[1]-a[1]);
+    const out = [];
+    out.push('Domény (frekvencia):');
+    for (const [d,c] of doms) out.push(`  ${d}: ${c}`);
+    out.push('\nTLD (frekvencia):');
+    for (const [t,c] of tlds) out.push(`  .${t}: ${c}`);
+    el('analytics').textContent = out.join('\n');
+    el('domainCount').textContent = String(doms.length);
+    el('tldCount').textContent = String(tlds.length);
+  }
+
+  function getConfig() {
+    return {
+      regexMode: el('regexMode').value,
+      minLocalLen: Number(el('minLocalLen').value) || 1,
+      whitelist: new Set(parseList(el('domainWhitelist').value)),
+      blacklist: new Set(parseList(el('domainBlacklist').value)),
+      stripPlus: el('stripPlus').checked,
+      normalizeCase: el('normalizeCase').checked,
+      ignoreDisposable: el('ignoreDisposable').checked,
+    };
+  }
+
+  function exportText(lines) {
+    return lines.join('\n');
+  }
+  function exportCSV(lines) {
+    const rows = [['email','domain','source']];
+    for (const e of lines) {
+      const meta = state.metaByEmail.get(e) || { domain: domainOf(e), source: '' };
+      rows.push([e, meta.domain, meta.source]);
+    }
+    return rows.map(r => r.map(x => `"${String(x).replace(/"/g,'""')}"`).join(',')).join('\n');
+  }
+  function exportJSON(lines) {
+    const items = lines.map(e => {
+      const meta = state.metaByEmail.get(e) || { domain: domainOf(e), source: '' };
+      return { email: e, domain: meta.domain, source: meta.source };
+    });
+    return JSON.stringify({ count: lines.length, items }, null, 2);
+  }
+
+  function download(filename, content, mime) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
+  }
+
+  async function copyToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      log('Skopírované do schránky.');
+    } catch (e) {
+      log('Kopírovanie zlyhalo: ' + e.message);
+    }
+  }
+
+  // File reading
+  async function readFiles(files) {
+    const contents = [];
+    for (const f of files) {
+      const text = await f.text();
+      contents.push({ name: f.name, text });
+      log(`Načítaný súbor: ${f.name} (${f.size} B)`);
+    }
+    return contents;
+  }
+
+  // Profile save/load
+  function saveProfile() {
+    const cfg = getConfig();
+    const serializable = {
+      regexMode: cfg.regexMode,
+      minLocalLen: cfg.minLocalLen,
+      whitelist: Array.from(cfg.whitelist),
+      blacklist: Array.from(cfg.blacklist),
+      stripPlus: cfg.stripPlus,
+      normalizeCase: cfg.normalizeCase,
+      ignoreDisposable: cfg.ignoreDisposable,
+      theme: document.body.getAttribute('data-theme')
+    };
+    localStorage.setItem(state.profileKey, JSON.stringify(serializable));
+    log('Profil uložený.');
+  }
+
+  function loadProfile() {
+    const raw = localStorage.getItem(state.profileKey);
+    if (!raw) { log('Žiadny uložený profil.'); return; }
+    try {
+      const p = JSON.parse(raw);
+      el('regexMode').value = p.regexMode || 'practical';
+      el('minLocalLen').value = String(p.minLocalLen || 1);
+      el('domainWhitelist').value = (p.whitelist || []).join(', ');
+      el('domainBlacklist').value = (p.blacklist || []).join(', ');
+      el('stripPlus').checked = !!p.stripPlus;
+      el('normalizeCase').checked = !!p.normalizeCase;
+      el('ignoreDisposable').checked = !!p.ignoreDisposable;
+      if (p.theme) document.body.setAttribute('data-theme', p.theme);
+      log('Profil načítaný.');
+    } catch (e) {
+      log('Načítanie profilu zlyhalo: ' + e.message);
+    }
+  }
+
+  function resetAll() {
+    el('inputText').value = '';
+    el('domainWhitelist').value = '';
+    el('domainBlacklist').value = '';
+    el('minLocalLen').value = '1';
+    el('regexMode').value = 'practical';
+    el('stripPlus').checked = true;
+    el('normalizeCase').checked = true;
+    el('ignoreDisposable').checked = false;
+    state.rawInputs = [];
+    state.emails = [];
+    state.uniqueEmails = [];
+    state.metaByEmail.clear();
+    renderResults([], []);
+    renderAnalytics([]);
+    el('log').textContent = '';
+    log('Reset hotový.');
+  }
+
+  // Extract action
+  async function extractAction() {
+    const cfg = getConfig();
+    state.emails = [];
+    state.uniqueEmails = [];
+    state.metaByEmail.clear();
+
+    const textAreaInput = el('inputText').value || '';
+    const sources = [];
+
+    if (textAreaInput.trim().length) {
+      sources.push({ name: 'textarea', text: textAreaInput });
+      log(`Spracovanie vstupu z textarey (${textAreaInput.length} znakov).`);
+    }
+
+    const files = el('fileInput').files;
+    if (files && files.length) {
+      const fileContents = await readFiles(files);
+      sources.push(...fileContents);
+    }
+
+    if (state.rawInputs.length) {
+      // Include drag-and-drop content not in file input
+      sources.push(...state.rawInputs);
+    }
+
+    if (!sources.length) {
+      log('Žiadny vstup. Vlož text alebo nahraj súbory.');
+      renderResults([], []);
+      renderAnalytics([]);
+      return;
+    }
+
+    let totalFound = [];
+    for (const s of sources) {
+      const found = extractFromText(s.text, cfg, s.name);
+      totalFound.push(...found);
+    }
+
+    const uniqueList = unique(totalFound);
+    const sortedUnique = sortEmails(uniqueList);
+
+    state.emails = totalFound;
+    state.uniqueEmails = sortedUnique;
+
+    renderResults(totalFound, sortedUnique);
+    renderAnalytics(sortedUnique);
+    log(`Nájdených ${totalFound.length}, unikátnych ${sortedUnique.length}.`);
+  }
+
+  // UI wiring
+  el('extractBtn').addEventListener('click', extractAction);
+  el('copyBtn').addEventListener('click', () => {
+    const txt = exportText(state.uniqueEmails);
+    copyToClipboard(txt);
+  });
+  el('downloadTxtBtn').addEventListener('click', () => {
+    const txt = exportText(state.uniqueEmails);
+    download('emails.txt', txt, 'text/plain');
+  });
+  el('downloadCsvBtn').addEventListener('click', () => {
+    const csv = exportCSV(state.uniqueEmails);
+    download('emails.csv', csv, 'text/csv');
+  });
+  el('downloadJsonBtn').addEventListener('click', () => {
+    const json = exportJSON(state.uniqueEmails);
+    download('emails.json', json, 'application/json');
+  });
+
+  // Drag & Drop
+  const drop = el('dropZone');
+  ['dragenter','dragover'].forEach(evt => {
+    drop.addEventListener(evt, e => {
+      e.preventDefault(); e.stopPropagation();
+      drop.classList.add('drag');
+    });
+  });
+  ['dragleave','drop'].forEach(evt => {
+    drop.addEventListener(evt, e => {
+      e.preventDefault(); e.stopPropagation();
+      drop.classList.remove('drag');
+    });
+  });
+  drop.addEventListener('drop', async (e) => {
+    const dt = e.dataTransfer;
+    if (dt && dt.files && dt.files.length) {
+      const contents = await readFiles(dt.files);
+      state.rawInputs.push(...contents);
+      log(`Pretiahnuté súbory: ${dt.files.length}.`);
+    } else {
+      const text = dt.getData('text');
+      if (text) {
+        state.rawInputs.push({ name: 'dragdrop', text });
+        log(`Pretiahnutý text (${text.length} znakov).`);
+      }
+    }
+  });
+
+  // File input change
+  el('fileInput').addEventListener('change', () => {
+    log(`${el('fileInput').files.length} súbor(ov) vybraných.`);
+  });
+
+  // Theme toggle
+  el('themeBtn').addEventListener('click', () => setTheme(true));
+
+  // Profiles
+  el('saveProfileBtn').addEventListener('click', saveProfile);
+  el('loadProfileBtn').addEventListener('click', loadProfile);
+  el('resetBtn').addEventListener('click', resetAll);
+
+  // Shortcuts
+  document.addEventListener('keydown', (e) => {
+    const mac = navigator.platform.toLowerCase().includes('mac');
+    const mod = mac ? e.metaKey : e.ctrlKey;
+    if (mod && e.key.toLowerCase() === 'enter') { e.preventDefault(); extractAction(); }
+    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); saveProfile(); }
+    if (mod && e.key.toLowerCase() === 'l') { e.preventDefault(); loadProfile(); }
+  });
+
+  // Init
+  setTheme(false);
+  log('Pripravené. Vlož text alebo pretiahni súbory, nastav filtre a extrahuj.');
+})();
+</script>
+</body>
+</html>
